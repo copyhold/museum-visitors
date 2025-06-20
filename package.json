@@ -9,8 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react-dom": "^19.1.0",
+    "hono": "^4.8.1",
     "react": "^19.1.0",
+    "react-dom": "^19.1.0",
     "recharts": "^2.15.3"
   },
   "devDependencies": {

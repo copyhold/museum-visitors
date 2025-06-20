@@ -1,0 +1,7 @@
+name = "museum-visitors-api"
+type = "javascript"
+compatibility_date = "2024-06-20"
+main = "api.worker.ts"
+
+[vars]
+# You can define environment variables here
