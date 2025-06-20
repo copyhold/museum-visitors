@@ -1,0 +1,5 @@
+{
+  "name": "Museum Visitor Management System",
+  "description": "A web application for tracking museum visitors with comprehensive reporting capabilities. Manage individual and group visits, categorize visitors by age groups, and provide detailed analytics.",
+  "requestFramePermissions": []
+}
