@@ -4,8 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"vite\" \"wrangler dev\"",
-    "wrangler": "wrangler dev",
+    "dev": "wrangler dev",
     "build": "vite build",
     "preview": "vite preview"
   },

@@ -4,6 +4,9 @@ import { Visit, EventType, VisitFormData, VisitTypeEnum, DailySummary, ChartData
 import { AGE_GROUP_KEYS } from './constants';
 
 type Env = { VISITORS_DB: D1Database };
+import { serveStatic } from 'hono/cloudflare-workers';
+// Import the Vite manifest for static serving
+import manifest from './dist/.vite/manifest.json';
 const app = new Hono<{ Bindings: Env }>();
 
 // Helper: get ISO week number
@@ -15,7 +18,7 @@ function getWeekNumber(d: Date): number {
   return weekNo;
 }
 
-app.get('/categories', async (c) => {
+app.get('/api/v1/categories', async (c) => {
   const db = c.env.VISITORS_DB;
   const { results } = await db.prepare(
     `SELECT * FROM event_types`
@@ -24,7 +27,7 @@ app.get('/categories', async (c) => {
 });
 
 // GET /visits
-app.get('/visits', async (c) => {
+app.get('/api/v1/visits', async (c) => {
   const db = c.env.VISITORS_DB;
   const { results } = await db.prepare(
     `SELECT * FROM visits ORDER BY date DESC, id DESC`
@@ -33,7 +36,7 @@ app.get('/visits', async (c) => {
 });
 
 // POST /visits
-app.post('/visits', async (c) => {
+app.post('/api/v1/visits', async (c) => {
   const db = c.env.VISITORS_DB;
   const data = await c.req.json<VisitFormData>();
   const now = new Date().toISOString();
@@ -56,7 +59,7 @@ app.post('/visits', async (c) => {
 });
 
 // PUT /visits/:id
-app.put('/visits/:id', async (c) => {
+app.put('/api/v1/visits/:id', async (c) => {
   const db = c.env.VISITORS_DB;
   const id = Number(c.req.param('id'));
   const data = await c.req.json<VisitFormData>();
@@ -78,7 +81,7 @@ app.put('/visits/:id', async (c) => {
 });
 
 // DELETE /visits/:id
-app.delete('/visits/:id', async (c) => {
+app.delete('/api/v1/visits/:id', async (c) => {
   const db = c.env.VISITORS_DB;
   const id = Number(c.req.param('id'));
   const result = await db.prepare('DELETE FROM visits WHERE id = ?').bind(id).run();
@@ -86,14 +89,14 @@ app.delete('/visits/:id', async (c) => {
 });
 
 // GET /event-types
-app.get('/event-types', async (c) => {
+app.get('/api/v1/event-types', async (c) => {
   const db = c.env.VISITORS_DB;
   const { results } = await db.prepare('SELECT * FROM event_types ORDER BY id').all();
   return c.json(results as unknown as EventType[]);
 });
 
 // GET /visits/export
-app.get('/visits/export', async (c) => {
+app.get('/api/v1/visits/export', async (c) => {
   const db = c.env.VISITORS_DB;
   const headers = ['id', 'date', 'visit_type', 'group_description', ...AGE_GROUP_KEYS, 'event_type_id', 'created_at'];
   const { results } = await db.prepare('SELECT * FROM visits ORDER BY date DESC, id DESC').all();
@@ -115,7 +118,7 @@ app.get('/visits/export', async (c) => {
 });
 
 // GET /summary/today
-app.get('/summary/today', async (c) => {
+app.get('/api/v1/summary/today', async (c) => {
   const db = c.env.VISITORS_DB;
   const todayStr = new Date().toISOString().split('T')[0];
   const { results } = await db.prepare('SELECT * FROM visits WHERE date = ?').bind(todayStr).all();
@@ -139,7 +142,7 @@ app.get('/summary/today', async (c) => {
 });
 
 // GET /chart/month
-app.get('/chart/month', async (c) => {
+app.get('/api/v1/chart/month', async (c) => {
   const db = c.env.VISITORS_DB;
   const now = new Date();
   const year = now.getFullYear();
@@ -165,7 +168,7 @@ app.get('/chart/month', async (c) => {
 });
 
 // GET /chart/historical
-app.get('/chart/historical', async (c) => {
+app.get('/api/v1/chart/historical', async (c) => {
   const db = c.env.VISITORS_DB;
   const period = c.req.query('period') as 'week' | 'month';
   const count = Number(c.req.query('count')) || 4;
@@ -205,5 +208,11 @@ app.get('/chart/historical', async (c) => {
   }
   return c.json(data);
 });
+
+// Serve static files from ./dist for all other routes
+// app.use('/*', serveStatic({ root: './', manifest }));
+
+// Fallback: serve index.html for SPA routing
+app.get('*', serveStatic({ root: './', path: 'index.html', manifest }));
 
 export default app;

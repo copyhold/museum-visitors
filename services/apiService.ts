@@ -1,6 +1,6 @@
 import { Visit, EventType, VisitFormData, DailySummary, ChartDataPoint } from '../types';
 
-const API_BASE = 'http://localhost:8787';
+const API_BASE = '/api/v1';
 
 const apiService = {
   async getVisits(): Promise<Visit[]> {
