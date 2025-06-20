@@ -1,20 +1,10 @@
 import { Hono } from 'hono';
-import { Visit, EventType, VisitFormData, VisitTypeEnum, DailySummary, ChartDataPoint, AgeGroupCounts } from './types';
-import { INITIAL_EVENT_TYPES, AGE_GROUP_KEYS } from './constants';
+import {D1Database} from '@cloudflare/workers-types';
+import { Visit, EventType, VisitFormData, VisitTypeEnum, DailySummary, ChartDataPoint } from './types';
+import { AGE_GROUP_KEYS } from './constants';
 
-let visits: Visit[] = [
-  { id: 1, date: '2024-07-15', visit_type: VisitTypeEnum.INDIVIDUAL, children_count: 2, adults_count: 1, seniors_count: 0, students_count: 0, event_type_id: 2, created_at: new Date().toISOString() },
-  { id: 2, date: '2024-07-15', visit_type: VisitTypeEnum.GROUP, group_description: 'School Trip Grade 5', children_count: 25, adults_count: 2, seniors_count: 0, students_count: 0, event_type_id: 8, created_at: new Date().toISOString() },
-  { id: 3, date: '2024-07-16', visit_type: VisitTypeEnum.INDIVIDUAL, children_count: 0, adults_count: 2, seniors_count: 1, students_count: 0, event_type_id: 5, created_at: new Date().toISOString() },
-  { id: 4, date: new Date().toISOString().split('T')[0], visit_type: VisitTypeEnum.INDIVIDUAL, children_count: 1, adults_count: 1, seniors_count: 0, students_count: 0, event_type_id: 1, created_at: new Date().toISOString() },
-];
-let eventTypes: EventType[] = [...INITIAL_EVENT_TYPES];
-let nextVisitId = visits.length > 0 ? Math.max(...visits.map(v => v.id)) + 1 : 1;
-
-const app = new Hono();
-
-// Helper: delay for simulating latency
-const delay = async <T,>(data: T, ms: number = 100): Promise<T> => new Promise(resolve => setTimeout(() => resolve(data), ms));
+type Env = { VISITORS_DB: D1Database };
+const app = new Hono<{ Bindings: Env }>();
 
 // Helper: get ISO week number
 function getWeekNumber(d: Date): number {
@@ -25,76 +15,117 @@ function getWeekNumber(d: Date): number {
   return weekNo;
 }
 
+app.get('/categories', async (c) => {
+  const db = c.env.VISITORS_DB;
+  const { results } = await db.prepare(
+    `SELECT * FROM event_types`
+  ).all();
+  return c.json(results as unknown as EventType[]);
+});
+
+// GET /visits
 app.get('/visits', async (c) => {
-  const sorted = [...visits].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime() || (b.id - a.id));
-  return c.json(await delay(sorted));
+  const db = c.env.VISITORS_DB;
+  const { results } = await db.prepare(
+    `SELECT * FROM visits ORDER BY date DESC, id DESC`
+  ).all();
+  return c.json(results as unknown as Visit[]);
 });
 
+// POST /visits
 app.post('/visits', async (c) => {
+  const db = c.env.VISITORS_DB;
   const data = await c.req.json<VisitFormData>();
-  const newVisit: Visit = {
-    ...data,
-    id: nextVisitId++,
-    created_at: new Date().toISOString(),
-  };
-  visits.push(newVisit);
-  return c.json(await delay(newVisit));
+  const now = new Date().toISOString();
+  const result = await db.prepare(
+    `INSERT INTO visits (date, visit_type, group_description, children_count, adults_count, seniors_count, students_count, event_type_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    data.date,
+    data.visit_type,
+    data.group_description || null,
+    data.children_count,
+    data.adults_count,
+    data.seniors_count,
+    data.students_count,
+    data.event_type_id,
+    now
+  ).run();
+  const { results } = await db.prepare('SELECT * FROM visits WHERE id = ?').bind(result.meta.last_row_id).all();
+  return c.json(results[0]);
 });
 
+// PUT /visits/:id
 app.put('/visits/:id', async (c) => {
+  const db = c.env.VISITORS_DB;
   const id = Number(c.req.param('id'));
   const data = await c.req.json<VisitFormData>();
-  const index = visits.findIndex(v => v.id === id);
-  if (index === -1) return c.json(null, 404);
-  visits[index] = { ...visits[index], ...data };
-  return c.json(await delay(visits[index]));
+  await db.prepare(
+    `UPDATE visits SET date=?, visit_type=?, group_description=?, children_count=?, adults_count=?, seniors_count=?, students_count=?, event_type_id=? WHERE id=?`
+  ).bind(
+    data.date,
+    data.visit_type,
+    data.group_description || null,
+    data.children_count,
+    data.adults_count,
+    data.seniors_count,
+    data.students_count,
+    data.event_type_id,
+    id
+  ).run();
+  const { results } = await db.prepare('SELECT * FROM visits WHERE id = ?').bind(id).all();
+  return results[0] ? c.json(results[0]) : c.json(null, 404);
 });
 
+// DELETE /visits/:id
 app.delete('/visits/:id', async (c) => {
+  const db = c.env.VISITORS_DB;
   const id = Number(c.req.param('id'));
-  const initialLength = visits.length;
-  visits = visits.filter(v => v.id !== id);
-  return c.json(await delay(visits.length < initialLength));
+  const result = await db.prepare('DELETE FROM visits WHERE id = ?').bind(id).run();
+  return c.json(result.meta.changes > 0);
 });
 
+// GET /event-types
 app.get('/event-types', async (c) => {
-  return c.json(await delay([...eventTypes]));
+  const db = c.env.VISITORS_DB;
+  const { results } = await db.prepare('SELECT * FROM event_types ORDER BY id').all();
+  return c.json(results as unknown as EventType[]);
 });
 
+// GET /visits/export
 app.get('/visits/export', async (c) => {
-  if (visits.length === 0) {
-    return c.text('No data to export.', 404);
-  }
+  const db = c.env.VISITORS_DB;
   const headers = ['id', 'date', 'visit_type', 'group_description', ...AGE_GROUP_KEYS, 'event_type_id', 'created_at'];
-  const csvRows = visits.map(visit => {
-    const eventType = eventTypes.find(et => et.id === visit.event_type_id);
-    return [
-      visit.id,
-      visit.date,
-      visit.visit_type,
-      visit.group_description || '',
-      visit.children_count,
-      visit.adults_count,
-      visit.seniors_count,
-      visit.students_count,
-      eventType ? eventType.name : visit.event_type_id,
-      visit.created_at
-    ].join(',');
-  });
+  const { results } = await db.prepare('SELECT * FROM visits ORDER BY date DESC, id DESC').all();
+  if (!results.length) return c.text('No data to export.', 404);
+  const csvRows = results.map((visit: any) => [
+    visit.id,
+    visit.date,
+    visit.visit_type,
+    visit.group_description || '',
+    visit.children_count,
+    visit.adults_count,
+    visit.seniors_count,
+    visit.students_count,
+    visit.event_type_id,
+    visit.created_at
+  ].join(','));
   const csvContent = `${headers.join(',')}\n${csvRows.join('\n')}`;
   return c.text(csvContent, 200, { 'content-type': 'text/csv' });
 });
 
+// GET /summary/today
 app.get('/summary/today', async (c) => {
+  const db = c.env.VISITORS_DB;
   const todayStr = new Date().toISOString().split('T')[0];
-  const todayVisits = visits.filter(v => v.date === todayStr);
+  const { results } = await db.prepare('SELECT * FROM visits WHERE date = ?').bind(todayStr).all();
   const summary: DailySummary = {
     total_visitors: 0,
     individual_visits: 0,
     group_visits: 0,
     age_breakdown: { children_count: 0, adults_count: 0, seniors_count: 0, students_count: 0 },
   };
-  todayVisits.forEach(visit => {
+  for (const visit of results as unknown as Visit[]) {
     const visitTotal = visit.children_count + visit.adults_count + visit.seniors_count + visit.students_count;
     summary.total_visitors += visitTotal;
     if (visit.visit_type === VisitTypeEnum.INDIVIDUAL) summary.individual_visits++;
@@ -103,11 +134,13 @@ app.get('/summary/today', async (c) => {
     summary.age_breakdown.adults_count += visit.adults_count;
     summary.age_breakdown.seniors_count += visit.seniors_count;
     summary.age_breakdown.students_count += visit.students_count;
-  });
-  return c.json(await delay(summary));
+  }
+  return c.json(summary);
 });
 
+// GET /chart/month
 app.get('/chart/month', async (c) => {
+  const db = c.env.VISITORS_DB;
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
@@ -115,23 +148,25 @@ app.get('/chart/month', async (c) => {
   const data: ChartDataPoint[] = [];
   for (let day = 1; day <= daysInMonth; day++) {
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const dailyVisits = visits.filter(v => v.date === dateStr);
+    const { results } = await db.prepare('SELECT * FROM visits WHERE date = ?').bind(dateStr).all();
     const point: ChartDataPoint = {
       name: String(day).padStart(2, '0'),
       children: 0, adults: 0, seniors: 0, students: 0
     };
-    dailyVisits.forEach(v => {
+    for (const v of results as unknown as Visit[]) {
       point.children += v.children_count;
       point.adults += v.adults_count;
       point.seniors += v.seniors_count;
       point.students += v.students_count;
-    });
+    }
     data.push(point);
   }
-  return c.json(await delay(data));
+  return c.json(data);
 });
 
+// GET /chart/historical
 app.get('/chart/historical', async (c) => {
+  const db = c.env.VISITORS_DB;
   const period = c.req.query('period') as 'week' | 'month';
   const count = Number(c.req.query('count')) || 4;
   const data: ChartDataPoint[] = [];
@@ -152,21 +187,23 @@ app.get('/chart/historical', async (c) => {
       startDate.setHours(0,0,0,0);
       name = `W${getWeekNumber(startDate)}-${startDate.getFullYear().toString().slice(-2)}`;
     }
-    const periodVisits = visits.filter(v => {
-      const visitDate = new Date(v.date);
-      visitDate.setHours(0,0,0,0);
-      return visitDate >= startDate && visitDate <= endDate;
-    });
+    // Query visits in range
+    const { results } = await db.prepare(
+      'SELECT * FROM visits WHERE date >= ? AND date <= ?'
+    ).bind(
+      startDate.toISOString().slice(0, 10),
+      endDate.toISOString().slice(0, 10)
+    ).all();
     const point: ChartDataPoint = { name, children: 0, adults: 0, seniors: 0, students: 0 };
-    periodVisits.forEach(v => {
+    for (const v of results as unknown as Visit[]) {
       point.children += v.children_count;
       point.adults += v.adults_count;
       point.seniors += v.seniors_count;
       point.students += v.students_count;
-    });
+    }
     data.unshift(point);
   }
-  return c.json(await delay(data));
+  return c.json(data);
 });
 
 export default app;
