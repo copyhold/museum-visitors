@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently \"vite\" \"wrangler dev\"",
+    "wrangler": "wrangler dev",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -17,6 +18,8 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250620.0",
     "@types/node": "^22.14.0",
+    "@types/react": "^19.1.8",
+    "concurrently": "^8.2.2",
     "typescript": "~5.7.2",
     "vite": "^6.2.0"
   }
