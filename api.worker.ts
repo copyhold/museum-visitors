@@ -209,10 +209,7 @@ app.get('/api/v1/chart/historical', async (c) => {
   return c.json(data);
 });
 
-// Serve static files from ./dist for all other routes
-// app.use('/*', serveStatic({ root: './', manifest }));
-
-// Fallback: serve index.html for SPA routing
+app.get('/favicon.ico', (c) => new Response(null, { status: 204 }));
 app.get('*', serveStatic({ root: './', path: 'index.html', manifest }));
 
 export default app;
