@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { NAV_TABS, AGE_GROUP_DISPLAY_KEYS } from './constants';
 import AddVisitForm from './components/AddVisitForm';
@@ -12,18 +11,25 @@ import apiService from './services/apiService';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<string>(NAV_TABS[0].id);
+  
+  // Data states
   const [visits, setVisits] = useState<Visit[]>([]);
   const [eventTypes, setEventTypes] = useState<EventType[]>([]);
-  const [editingVisit, setEditingVisit] = useState<Visit | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-
   const [todaySummary, setTodaySummary] = useState<DailySummary | null>(null);
   const [currentMonthData, setCurrentMonthData] = useState<ChartDataPoint[]>([]);
   const [historicalData, setHistoricalData] = useState<ChartDataPoint[]>([]);
   const [historicalParams, setHistoricalParams] = useState<HistoricalReportParams>({ period: 'week', count: 4 });
 
+  // Loading states for each tab
+  const [isLoadingEventTypes, setIsLoadingEventTypes] = useState<boolean>(false);
+  const [isLoadingVisits, setIsLoadingVisits] = useState<boolean>(false);
+  const [isLoadingReports, setIsLoadingReports] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  // UI states
+  const [editingVisit, setEditingVisit] = useState<Visit | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState<boolean>(false);
   const [visitToDeleteId, setVisitToDeleteId] = useState<number | null>(null);
 
@@ -32,37 +38,75 @@ const App: React.FC = () => {
     setTimeout(() => setter(null), duration);
   };
 
-  const fetchData = useCallback(async () => {
-    setIsLoading(true);
+  // Load event types (needed for Add Visit form)
+  const loadEventTypes = useCallback(async () => {
+    if (eventTypes.length > 0) return; // Already loaded
+    
+    setIsLoadingEventTypes(true);
     setError(null);
     try {
-      const [visitsData, eventTypesData, summaryData, monthChartData, histData] = await Promise.all([
-        apiService.getVisits(),
-        apiService.getEventTypes(),
+      const eventTypesData = await apiService.getEventTypes();
+      setEventTypes(eventTypesData);
+    } catch (err) {
+      setError('Failed to fetch event types. Please try again later.');
+      console.error(err);
+    } finally {
+      setIsLoadingEventTypes(false);
+    }
+  }, [eventTypes.length]);
+
+  // Load visits (needed for Manage Visits tab)
+  const loadVisits = useCallback(async () => {
+    setIsLoadingVisits(true);
+    setError(null);
+    try {
+      const visitsData = await apiService.getVisits();
+      setVisits(visitsData);
+    } catch (err) {
+      setError('Failed to fetch visits. Please try again later.');
+      console.error(err);
+    } finally {
+      setIsLoadingVisits(false);
+    }
+  }, []);
+
+  // Load reports data (needed for Reports tab)
+  const loadReportsData = useCallback(async () => {
+    setIsLoadingReports(true);
+    setError(null);
+    try {
+      const [summaryData, monthChartData, histData] = await Promise.all([
         apiService.getTodaySummary(),
         apiService.getCurrentMonthData(),
         apiService.getHistoricalData(historicalParams.period, historicalParams.count)
       ]);
-      setVisits(visitsData);
-      setEventTypes(eventTypesData);
       setTodaySummary(summaryData);
       setCurrentMonthData(monthChartData);
       setHistoricalData(histData);
     } catch (err) {
-      setError('Failed to fetch data. Please try again later.');
+      setError('Failed to fetch reports data. Please try again later.');
       console.error(err);
     } finally {
-      setIsLoading(false);
+      setIsLoadingReports(false);
     }
   }, [historicalParams]);
 
+  // Load data when tab changes
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (activeTab === 'add') {
+      loadEventTypes();
+    } else if (activeTab === 'manage') {
+      loadEventTypes(); // Also needed for the visit list
+      loadVisits();
+    } else if (activeTab === 'reports') {
+      loadEventTypes(); // Also needed for the dashboard
+      loadReportsData();
+    }
+  }, [activeTab, loadEventTypes, loadVisits, loadReportsData]);
 
   const handleFetchHistoricalData = useCallback(async (period: 'week' | 'month', count: number) => {
     setHistoricalParams({ period, count });
-    setIsLoading(true);
+    setIsLoadingReports(true);
     try {
       const histData = await apiService.getHistoricalData(period, count);
       setHistoricalData(histData);
@@ -70,13 +114,12 @@ const App: React.FC = () => {
       setError('Failed to fetch historical data.');
       console.error(err);
     } finally {
-      setIsLoading(false);
+      setIsLoadingReports(false);
     }
   }, []);
 
-
   const handleFormSubmit = async (formData: VisitFormData) => {
-    setIsLoading(true);
+    setIsSubmitting(true);
     setError(null);
     try {
       if (editingVisit) {
@@ -88,12 +131,13 @@ const App: React.FC = () => {
       }
       setEditingVisit(null);
       setActiveTab(NAV_TABS[1].id); // Switch to Manage Visits tab
-      fetchData(); // Refresh all data
+      // Refresh visits data after adding/updating
+      loadVisits();
     } catch (err) {
       setError('Failed to save visit. Please try again.');
       console.error(err);
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -114,23 +158,24 @@ const App: React.FC = () => {
 
   const handleDeleteVisit = async () => {
     if (visitToDeleteId === null) return;
-    setIsLoading(true);
+    setIsSubmitting(true);
     setError(null);
     try {
       await apiService.deleteVisit(visitToDeleteId);
       closeDeleteModal();
       showMessage(setSuccessMessage, 'Visit deleted successfully!');
-      fetchData(); // Refresh all data
+      // Refresh visits data after deleting
+      loadVisits();
     } catch (err) {
       setError('Failed to delete visit. Please try again.');
       console.error(err);
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
   
   const handleExportCSV = async () => {
-    setIsLoading(true);
+    setIsSubmitting(true);
     setError(null);
     try {
       await apiService.exportVisits();
@@ -139,10 +184,17 @@ const App: React.FC = () => {
       setError('Failed to export CSV. Please try again.');
       console.error(err);
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
+  // Determine which loading state to show based on active tab
+  const getCurrentLoadingState = () => {
+    if (activeTab === 'add') return isLoadingEventTypes;
+    if (activeTab === 'manage') return isLoadingEventTypes || isLoadingVisits;
+    if (activeTab === 'reports') return isLoadingEventTypes || isLoadingReports;
+    return false;
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 flex flex-col">
@@ -168,7 +220,8 @@ const App: React.FC = () => {
       </header>
 
       <main className="flex-grow container mx-auto px-4 py-8">
-        {isLoading && <LoadingSpinner />}
+        {getCurrentLoadingState() && <LoadingSpinner />}
+        {isSubmitting && <LoadingSpinner />}
         {error && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">{error}</div>}
         {successMessage && <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative mb-4" role="alert">{successMessage}</div>}
 
@@ -181,7 +234,7 @@ const App: React.FC = () => {
             onClear={() => setEditingVisit(null)}
           />
         )}
-        {activeTab === 'manage' && !isLoading && (
+        {activeTab === 'manage' && !getCurrentLoadingState() && (
           <VisitList
             visits={visits}
             eventTypes={eventTypes}
@@ -190,7 +243,7 @@ const App: React.FC = () => {
             onExportCSV={handleExportCSV}
           />
         )}
-        {activeTab === 'reports' && !isLoading && todaySummary && (
+        {activeTab === 'reports' && !getCurrentLoadingState() && todaySummary && (
           <Dashboard
             todaySummary={todaySummary}
             currentMonthData={currentMonthData}
