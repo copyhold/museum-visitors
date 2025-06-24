@@ -213,7 +213,7 @@ app.get('/api/v1/chart/historical', async (c) => {
   return c.json(data);
 });
 
-app.get('/favicon.ico', (c) => new Response(null, { status: 204 }));
+app.get('/favicon.ico', (c) => new Response(null, { status: 301, headers: { Location: 'https://eindormuseum.co.il/wp-content/uploads/2016/11/cropped-eindor-32x32.png' } }));
 app.get('*', serveStatic({ root: './', path: 'index.html', manifest }));
 
 export default app;
