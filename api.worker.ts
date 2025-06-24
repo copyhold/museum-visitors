@@ -5,6 +5,7 @@ import { AGE_GROUP_KEYS } from './constants';
 
 type Env = { VISITORS_DB: D1Database };
 import { serveStatic } from 'hono/cloudflare-workers';
+import { cache } from 'hono/cache';
 // Import the Vite manifest for static serving
 import manifest from './dist/.vite/manifest.json';
 const app = new Hono<{ Bindings: Env }>();
@@ -18,7 +19,10 @@ function getWeekNumber(d: Date): number {
   return weekNo;
 }
 
-app.get('/api/v1/categories', async (c) => {
+app.get('/api/v1/categories', cache({
+  cacheName: 'categories-cache',
+  cacheControl: 'public, max-age=3600, s-maxage=3600',
+}), async (c) => {
   const db = c.env.VISITORS_DB;
   const { results } = await db.prepare(
     `SELECT * FROM event_types`
@@ -91,7 +95,7 @@ app.delete('/api/v1/visits/:id', async (c) => {
 // GET /event-types
 app.get('/api/v1/event-types', async (c) => {
   const db = c.env.VISITORS_DB;
-  const { results } = await db.prepare('SELECT * FROM event_types ORDER BY id').all();
+  const { results } = await db.prepare('SELECT * FROM event_types ORDER BY name').all();
   return c.json(results as unknown as EventType[]);
 });
 
